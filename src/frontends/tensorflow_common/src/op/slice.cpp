@@ -5,12 +5,16 @@
 #include "openvino/op/slice.hpp"
 
 #include "common_op_table.hpp"
+#include "helper_ops/complex_type_mark.hpp"
 #include "openvino/op/add.hpp"
 #include "openvino/op/broadcast.hpp"
+#include "openvino/op/concat.hpp"
 #include "openvino/op/convert_like.hpp"
+#include "openvino/op/gather.hpp"
 #include "openvino/op/less.hpp"
 #include "openvino/op/select.hpp"
 #include "openvino/op/shape_of.hpp"
+#include "openvino/op/unsqueeze.hpp"
 #include "utils.hpp"
 
 using namespace std;
@@ -22,8 +26,9 @@ namespace tensorflow {
 namespace op {
 
 OutputVector translate_slice_op(const NodeContext& node) {
-    default_op_checks(node, 3, {"Slice", "SLICE"});
+    default_op_checks(node, 3, {"Slice", "SLICE"}, true);
     auto input = node.get_input(0);
+    auto complex_type_mark = as_type_ptr<ComplexTypeMark>(input.get_node_shared_ptr());
     auto start = node.get_input(1);
     auto size = node.get_input(2);
 
@@ -50,9 +55,42 @@ OutputVector translate_slice_op(const NodeContext& node) {
     auto start_shape = make_shared<v3::ShapeOf>(start);
     auto step = make_shared<v3::Broadcast>(const_one, start_shape);
 
-    auto res = make_shared<v8::Slice>(input, start, stop, step);
-    set_node_name(node.get_name(), res);
-    return res->outputs();
+    if (complex_type_mark) {
+        element::Type complex_part_type = complex_type_mark->get_complex_part_type();
+        input = complex_type_mark->get_data();
+
+        auto gather_index_real = make_shared<v0::Constant>(element::i32, Shape{}, 0);
+        auto gather_index_imag = make_shared<v0::Constant>(element::i32, Shape{}, 1);
+        auto minus_one = make_shared<v0::Constant>(element::i32, Shape{1}, -1);
+        auto real = make_shared<v8::Gather>(input, gather_index_real, minus_one)->output(0);
+        auto imag = make_shared<v8::Gather>(input, gather_index_imag, minus_one)->output(0);
+        
+        auto real_part = make_shared<v8::Slice>(real, start, stop, step);
+        set_node_name(node.get_name(), real_part);
+        auto imag_part = make_shared<v8::Slice>(imag, start, stop, step);
+        set_node_name(node.get_name(), imag_part);
+
+        OutputVector concat_inputs;
+        auto real_part_unsqueeze = make_shared<v0::Unsqueeze>(real_part, minus_one);
+        auto imag_part_unsqueeze = make_shared<v0::Unsqueeze>(imag_part, minus_one);
+        concat_inputs.push_back(real_part_unsqueeze);
+        concat_inputs.push_back(imag_part_unsqueeze);
+        auto concat = make_shared<v0::Concat>(concat_inputs, -1);
+        auto complex_slice = make_shared<ComplexTypeMark>(concat, complex_part_type);
+        set_node_name(node.get_name(), complex_slice);
+        return complex_slice->outputs();
+
+
+        auto res = make_shared<v8::Slice>(input, start, stop, step);
+        set_node_name(node.get_name(), res);
+        auto complex_res = make_shared<ComplexTypeMark>(res, complex_part_type);
+        return res->outputs();
+    }
+    else {
+        auto res = make_shared<v8::Slice>(input, start, stop, step);
+        set_node_name(node.get_name(), res);
+        return res->outputs();
+    }
 }
 }  // namespace op
 }  // namespace tensorflow
