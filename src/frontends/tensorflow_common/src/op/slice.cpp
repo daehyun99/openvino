@@ -14,6 +14,7 @@
 #include "openvino/op/select.hpp"
 #include "openvino/op/shape_of.hpp"
 #include "utils.hpp"
+#include "openvino/op/constant.hpp"
 
 using namespace std;
 using namespace ov::op;
@@ -25,46 +26,56 @@ namespace op {
 
 OutputVector translate_slice_op(const NodeContext& node) {
     default_op_checks(node, 3, {"Slice", "SLICE"}, true);
-    auto input = node.get_input(0);
-    auto complex_type_mark_node = as_type_ptr<ComplexTypeMark>(input.get_node_shared_ptr());
-    auto start = node.get_input(1);
-    auto size = node.get_input(2);
 
-    // create axiliary constants
-    auto const_one = create_same_type_const_scalar<int32_t>(start, 1);
+    auto input = node.get_input(0);
+    auto start = node.get_input(1);
+    auto size  = node.get_input(2);
+
+    auto complex_mark = as_type_ptr<ComplexTypeMark>(input.get_node_shared_ptr());
+
+    // 1) complex면 underlying FP 텐서로 "data"를 교체
+    Output<Node> data = input;
+    element::Type complex_part_type;
+    if (complex_mark) {
+        complex_part_type = complex_mark->get_complex_part_type();
+        // issue 예제 스타일과 맞추려면 input_value(0) 사용 권장 :contentReference[oaicite:5]{index=5}
+        data = complex_mark->input_value(0);  // 또는 get_data()가 동일 동작이면 그걸 써도 OK
+    }
+
+    auto const_one  = create_same_type_const_scalar<int32_t>(start, 1);
     auto const_zero = create_same_type_const_scalar<int32_t>(start, 0);
 
-    // compute stop values in case non-negative sizes
-    auto stop_pos = make_shared<v1::Add>(start, size);
+    auto stop_pos = std::make_shared<v1::Add>(start, size);
 
-    // compute stop values in case negative sizes
-    // since TensorFlow supports only -1 among negative sizes
-    // assign stop values to the data shape
-    Output<Node> stop_neg = make_shared<v3::ShapeOf>(input);
-    stop_neg = make_shared<v1::ConvertLike>(stop_neg, size);
+    // 2) stop_neg는 ShapeOf(data)로 계산 (절대 ShapeOf(input) 쓰지 않기!)
+    Output<Node> stop_neg = std::make_shared<v3::ShapeOf>(data);
 
-    // select the correct stop value based on a sign of size value
-    auto negative_sizes_mask = make_shared<v1::Less>(size, const_zero);
-    // TODO: investigate if we can simplify and replace Select with FloorMod operation
-    // like FloorMod(size, input_shape)
-    auto stop = make_shared<v1::Select>(negative_sizes_mask, stop_neg, stop_pos);
+    // len(start) = ShapeOf(start) = [N] (1D 텐서)
+    auto start_shape = std::make_shared<v3::ShapeOf>(start);
 
-    // broadcast step value
-    auto start_shape = make_shared<v3::ShapeOf>(start);
-    auto step = make_shared<v3::Broadcast>(const_one, start_shape);
+    // start/stop/step은 1D + 동일 타입이어야 함 :contentReference[oaicite:6]{index=6}
+    auto ind_et = start_shape->get_output_element_type(0); // 보통 i64
+    auto idx0 = v0::Constant::create(ind_et, Shape{1}, {0});
+    auto idx1 = v0::Constant::create(ind_et, Shape{1}, {1});
 
-    if (complex_type_mark_node) {
-        auto complex_tensor = complex_type_mark_node->get_data();
-        auto slice_node = make_shared<v8::Slice>(complex_tensor, start, stop, step);
-        set_node_name(node.get_name(), slice_node);
-        auto complex_slice =
-            make_shared<ComplexTypeMark>(slice_node->output(0), complex_type_mark_node->get_complex_part_type());
+    // stop_neg = ShapeOf(data)[0 : len(start)]  -> complex 표현에서 마지막 축(2) 제거 목적
+    stop_neg = std::make_shared<v8::Slice>(stop_neg, idx0, start_shape, idx1);
+    stop_neg = std::make_shared<v1::ConvertLike>(stop_neg, size);
+
+    auto negative_sizes_mask = std::make_shared<v1::Less>(size, const_zero);
+    auto stop = std::make_shared<v1::Select>(negative_sizes_mask, stop_neg, stop_pos);
+
+    auto step = std::make_shared<v3::Broadcast>(const_one, start_shape);
+
+    auto slice = std::make_shared<v8::Slice>(data, start, stop, step);
+    set_node_name(node.get_name(), slice);
+
+    if (complex_mark) {
+        auto complex_slice = std::make_shared<ComplexTypeMark>(slice->output(0), complex_part_type);
         return complex_slice->outputs();
-    } else {
-        auto res = make_shared<v8::Slice>(input, start, stop, step);
-        set_node_name(node.get_name(), res);
-        return res->outputs();
     }
+
+    return slice->outputs();
 }
 }  // namespace op
 }  // namespace tensorflow
