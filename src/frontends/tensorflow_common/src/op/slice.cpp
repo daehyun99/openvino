@@ -5,6 +5,10 @@
 #include "openvino/op/slice.hpp"
 
 #include "common_op_table.hpp"
+<<<<<<< HEAD
+=======
+#include "common_translators.hpp"
+>>>>>>> 50714f991279f0f22de71a52b393e8e437b26d83
 #include "helper_ops/complex_type_mark.hpp"
 #include "openvino/op/add.hpp"
 #include "openvino/op/broadcast.hpp"
@@ -28,7 +32,11 @@ namespace op {
 OutputVector translate_slice_op(const NodeContext& node) {
     default_op_checks(node, 3, {"Slice", "SLICE"}, true);
     auto input = node.get_input(0);
+<<<<<<< HEAD
     auto complex_type_mark = as_type_ptr<ComplexTypeMark>(input.get_node_shared_ptr());
+=======
+    auto complex_type_mark_node = as_type_ptr<ComplexTypeMark>(input.get_node_shared_ptr());
+>>>>>>> 50714f991279f0f22de71a52b393e8e437b26d83
     auto start = node.get_input(1);
     auto size = node.get_input(2);
 
@@ -55,6 +63,7 @@ OutputVector translate_slice_op(const NodeContext& node) {
     auto start_shape = make_shared<v3::ShapeOf>(start);
     auto step = make_shared<v3::Broadcast>(const_one, start_shape);
 
+<<<<<<< HEAD
     if (complex_type_mark) {
         element::Type complex_part_type = complex_type_mark->get_complex_part_type();
         input = complex_type_mark->get_data();
@@ -87,6 +96,16 @@ OutputVector translate_slice_op(const NodeContext& node) {
         return res->outputs();
     }
     else {
+=======
+    if (complex_type_mark_node) {
+        auto complex_tensor = complex_type_mark_node->get_data();
+        auto slice_node = make_shared<v8::Slice>(complex_tensor, start, stop, step);
+        set_node_name(node.get_name(), slice_node);
+        auto complex_slice =
+            make_shared<ComplexTypeMark>(slice_node->output(0), complex_type_mark_node->get_complex_part_type());
+        return complex_slice->outputs();
+    } else {
+>>>>>>> 50714f991279f0f22de71a52b393e8e437b26d83
         auto res = make_shared<v8::Slice>(input, start, stop, step);
         set_node_name(node.get_name(), res);
         return res->outputs();
