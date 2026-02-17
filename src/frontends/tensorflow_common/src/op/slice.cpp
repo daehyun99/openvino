@@ -14,6 +14,12 @@
 #include "openvino/op/select.hpp"
 #include "openvino/op/shape_of.hpp"
 #include "utils.hpp"
+#include "openvino/op/gather.hpp"
+#include "openvino/op/concat.hpp"
+#include "openvino/op/unsqueeze.hpp"
+
+
+
 
 using namespace std;
 using namespace ov::op;
@@ -54,11 +60,34 @@ OutputVector translate_slice_op(const NodeContext& node) {
     auto step = make_shared<v3::Broadcast>(const_one, start_shape);
 
     if (complex_type_mark_node) {
-        auto complex_tensor = complex_type_mark_node->get_data();
-        auto slice_node = make_shared<v8::Slice>(complex_tensor, start, stop, step);
-        set_node_name(node.get_name(), slice_node);
-        auto complex_slice =
-            make_shared<ComplexTypeMark>(slice_node->output(0), complex_type_mark_node->get_complex_part_type());
+        element::Type complex_part_type = complex_type_mark_node->get_complex_part_type();
+        input = complex_type_mark_node->input_value(0);
+
+
+        auto gather_index_real = make_shared<v0::Constant>(element::i32, Shape{}, 0);
+        auto gather_index_imag = make_shared<v0::Constant>(element::i32, Shape{}, 1);
+        auto minus_one = make_shared<v0::Constant>(element::i32, Shape{1}, -1);
+        auto real = make_shared<v8::Gather>(input, gather_index_real, minus_one)->output(0);
+        auto imag = make_shared<v8::Gather>(input, gather_index_imag, minus_one)->output(0);
+
+        Output<Node> stop_neg = make_shared<v3::ShapeOf>(real);
+        stop_neg = make_shared<v1::ConvertLike>(stop_neg, size);
+
+        auto stop = make_shared<v1::Select>(negative_sizes_mask, stop_neg, stop_pos);
+
+        auto real_part = make_shared<v8::Slice>(real, start, stop, step);
+        set_node_name(node.get_name(), real_part);
+        auto imag_part = make_shared<v8::Slice>(imag, start, stop, step);
+        set_node_name(node.get_name(), imag_part);
+
+        OutputVector concat_inputs;
+        auto real_part_unsqueeze = make_shared<v0::Unsqueeze>(real_part, minus_one);
+        auto imag_part_unsqueeze = make_shared<v0::Unsqueeze>(imag_part, minus_one);
+        concat_inputs.push_back(real_part_unsqueeze);
+        concat_inputs.push_back(imag_part_unsqueeze);
+        auto concat = make_shared<v0::Concat>(concat_inputs, -1);
+        auto complex_slice = make_shared<ComplexTypeMark>(concat, complex_part_type);
+        set_node_name(node.get_name(), complex_slice);
         return complex_slice->outputs();
     } else {
         auto res = make_shared<v8::Slice>(input, start, stop, step);
