@@ -40,6 +40,7 @@ from tests import (
     xfail_issue_90649,
     skip_bitwise_ui64,
     xfail_issue_99950,
+    xfail_issue_99952,
     xfail_issue_99954,
     xfail_issue_99961,
     xfail_issue_99968,
@@ -377,6 +378,10 @@ tests_expected_to_fail = [
     (
         xfail_issue_99950,
         "OnnxBackendNodeModelTest.test_center_crop_pad_crop_negative_axes_hwc_expanded_cpu",
+    ),
+    (
+        xfail_issue_99952,
+        "OnnxBackendNodeModelTest.test_col2im_5d_cpu"
     ),
     (
         xfail_issue_99954,
