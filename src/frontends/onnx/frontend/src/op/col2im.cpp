@@ -6,9 +6,7 @@
 
 #include "core/operator_set.hpp"
 #include "exceptions.hpp"
-#include "openvino/core/validation_util.hpp"
 #include "utils/common.hpp"
-using namespace ov::op::v15;
 
 namespace ov {
 namespace frontend {
