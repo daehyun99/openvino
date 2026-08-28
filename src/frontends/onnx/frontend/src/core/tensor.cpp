@@ -474,7 +474,11 @@ std::shared_ptr<ov::op::v0::Constant> Tensor::get_ov_constant() const {
     }
 
     if (element_count == 0) {
-        constant = common::make_failsafe_constant(ov_type);
+        if (shape_elements == 0 && !m_shape.empty()) {
+            constant = std::make_shared<ov::op::v0::Constant>(ov_type, m_shape, std::vector<uint8_t>{});
+        } else {
+            constant = common::make_failsafe_constant(ov_type);
+        }
     } else if (constant_buffer) {
         try {
             constant = std::make_shared<ov::op::v0::Constant>(ov_type, m_shape, constant_buffer);
